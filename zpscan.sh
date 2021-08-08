@@ -1,6 +1,7 @@
-#! /usr/local/bin/bash
+#!/usr/bin/env bash
 # Scan pool for failed disks and light failure LED
 # Should work with Supermicro SAS2 backplanes, unknown if it will work in other environments
+# works with SAS2008 and Dell R720
 # https://github.com/danb35/zpscan
 
 # Possible failure conditions:
@@ -8,18 +9,80 @@
 # -Unable to light fault LED if controller cannot see the drive
 # -Assumes drive serial numbers are unique in a system
 
+SCRIPT_NAME=`basename "$0"`
+SYSTEM=$(uname)
+
+if [ "$SYSTEM" = 'Linux' ]; then
+  function CREATE_LOOKUP_FILE {
+    blkid -s PARTUUID | awk -F  ":" '{split($1,drive,"/"); split($2,partuuid,"\""); print "s|"partuuid[2]"|"drive[3]"\t\t\t      |g"}' > /tmp/$SCRIPT_NAME-lookup-$pool.sed
+  }
+
+  function GET_DISK_SERIAL {
+    local local_drive=$1
+
+    hdparm -I /dev/$local_drive | grep 'Serial\ Number' | awk '{print $3 }'  | sed -E 's/^WD-//;s/[\t ]+//'
+  }
+
+  function SEND_MAIL {
+    local local_mailbody=$1
+    local local_mailsubject=$2
+    local local_mailrecipient=$3
+
+    if [ $mailauth == "true" ]; then
+      echo "Mail authentication was enabled, will try to send it via ssmtp"
+
+      if [ -z $( command -v ssmtp ) ]; then
+	echo "ssmtp command not found, install it in path!"
+        exit 1
+      fi
+
+      echo -e "Subject: $local_mailsubject \n\n $local_mailbody" | ssmtp $local_mailrecipient
+
+    else
+      echo "$local_mailbody" | mail -s "$local_mailsubject" $local_mailrecipient
+    fi
+  }
+
+elif [ "$SYSTEM" = 'FreeBSD' ]; then
+  function CREATE_LOOKUP_FILE {
+    glabel status | awk '{print "s|"$1"|"$3"\t\t\t      |g"}' > /tmp/$SCRIPT_NAME-lookup-$pool.sed
+  }
+
+  function GET_DISK_SERIAL {
+    local local_drive=$1
+
+    diskinfo -s /dev/$local_drive 2>/dev/null | sed -E 's/^WD-//;s/[\t ]+//'
+  }
+
+  function SEND_MAIL {
+    local local_mailbody=$1
+    local local_mailsubject=$2
+    local local_mailrecipient=$3
+
+    echo "$local_mailbody" | mail -s "$local_mailsubject" $local_mailrecipient
+  }
+else
+  echo "Unsuported system"
+  exit 1
+fi
+
 if [ ! "$1" ]; then
-  echo "Usage: zpscan.sh pool [email]"
+  echo "Usage: $SCRIPT_NAME pool [OPTION]"
   echo "Scan a pool, send email notification and activate leds of failed drives"
+  echo ""
+  echo "  -p,                        zfs pool to check"
+  echo "  -m,                        mail TO address, default is root"
+  echo "  -a,                        enable mail authentication"
   exit
 fi
 
-if [ $(pgrep -f zpscan.sh | wc -c) -ne 0 ]; then
-  echo "Multiple instances of this script cannot be run at the same time due to sas2ircu not being able to run concurrently."
-  exit
-fi
+IS_RUNNING=`pgrep -f $SCRIPT_NAME | grep  -v "$$" | wc -c`
 
-pool="$1"
+#if [ $IS_RUNNING -ne 0 ]; then
+#  echo "Multiple instances of this script cannot be run at the same time due to sas2ircu not being able to run concurrently."
+#  exit
+#fi
+
 basedir="/root/.sas2ircu"
 drivesfile=$basedir/drives-$pool
 locsfile=$basedir/locs-$pool
@@ -28,19 +91,33 @@ if [ ! -d $basedir ]; then
 fi
 touch $drivesfile
 touch $locsfile
-if [ "$2" ]; then
-  email="$2"
-else
-  email="root"
+mailauth=false
+mailrecipient="root"
+
+while getopts "p:m:a" opt; do
+    case $opt in
+    p) pool=${OPTARG} ;;
+    m) mailrecipient=${OPTARG} ;;
+    a) mailauth=true ;;
+    \?) ;; # Handle error: unknown option or missing required argument.
+    esac
+done
+
+if [ -z "$pool" ]; then
+        echo 'Missing pool!' >&2
+        exit 1
 fi
-condition=$(/sbin/zpool status $pool | egrep -i '(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED|corrupt|cannot|unrecover)')
+
+# Added exclude beacuse of false positive in case of pending ZFS features upgrade
+# condition=$(zpool status $pool | egrep -i '(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED|corrupt|cannot|unrecover)' | egrep -v '(features are unavailable)' )
+condition=$(zpool status $pool | egrep -i '(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED|corrupt|cannot|unrecover)' )
 if [ "${condition}" ]; then
-  glabel status | awk '{print "s|"$1"|"$3"\t\t\t      |g"}' > /tmp/glabel-lookup-$pool.sed
+  CREATE_LOOKUP_FILE
   emailSubject="`hostname` - ZFS pool - HEALTH fault"
   mailbody=$(zpool status $pool)
   echo "Sending email notification of degraded pool $pool"
-  echo "$mailbody" | mail -s "Degraded pool $pool on `hostname`" $email
-  drivelist=$(zpool status $pool | sed -f /tmp/glabel-lookup-$pool.sed | sed 's/p[0-9]//' | grep -E "(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED)" | grep -vE "^\W+($pool|NAME|mirror|raidz|stripe|logs|spares|state)" | sed -E $'s/.*was \/dev\/([0-9a-z]+)/\\1/;s/^[\t  ]+([0-9a-z]+)[\t ]+.*$/\\1/')
+  SEND_MAIL "$mailbody" "Degraded pool $pool on `hostname`" $mailrecipient
+  drivelist=$(zpool status $pool | sed -f /tmp/$SCRIPT_NAME-lookup-$pool.sed | sed 's/p[0-9]//' | grep -E "(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED)" | grep -vE "^\W+($pool|NAME|mirror|raidz|stripe|logs|spares|state)" | sed -E $'s/.*was \/dev\/([0-9a-z]+)/\\1/;s/^[\t  ]+([0-9a-z]+)[\t ]+.*$/\\1/')
   echo "Locating failed drives."
   for drive in $drivelist;
   do
@@ -54,11 +131,11 @@ if [ "${condition}" ]; then
       echo $controller $encaddr >> $locsfile
     fi
   done
-  rm /tmp/glabel-lookup-$pool.sed
+  rm /tmp/$SCRIPT_NAME-lookup-$pool.sed
 else
   echo "Saving drive list."
-  glabel status | awk '{print "s|"$1"|"$3"\t\t\t      |g"}' > /tmp/glabel-lookup-$pool.sed
-  drivelist=$(zpool status $pool | sed -f /tmp/glabel-lookup-$pool.sed | sed 's/p[0-9]//' | grep -E $'^\t  ' | grep -vE "^\W+($pool|NAME|mirror|raidz|stripe|logs|spares)" | sed -E $'s/^[\t ]+//;s/([a-z0-9]+).*/\\1/')
+  CREATE_LOOKUP_FILE
+  drivelist=$(zpool status $pool | sed -f /tmp/$SCRIPT_NAME-lookup-$pool.sed | sed 's/p[0-9]//' | grep -E $'^\t  ' | grep -vE "^\W+($pool|NAME|mirror|raidz|stripe|logs|spares)" | sed -E $'s/^[\t ]+//;s/([a-z0-9]+).*/\\1/' )
   controllerlist=$(sas2ircu list | grep -E ' [0-9]+ ' | sed -E $'s/^[\t ]+//;s/([0-9]+).*/\\1/')
   printf "" > $drivesfile
   # Go through each controller and check if the drive is attached to that controller
@@ -69,7 +146,8 @@ else
     do
       # "diskinfo -s disk" and "camcontrol identify [device id] -S" should be equivalent
       # WD disks have a WD- prefix that sas2ircu does not show, so we remove it
-      serial=$(diskinfo -s /dev/$drive 2>/dev/null | sed -E 's/^WD-//;s/[\t ]+//')
+      serial=$( GET_DISK_SERIAL $drive )
+
       encaddr=$(echo "$saslist" | grep "$serial" -B 8 | sed -E '1!d;N;s/^.*: ([0-9]+)\n.*: ([0-9]+)/\1:\2/')
       # Add to list of mappings
       if [ "${encaddr}" ]; then
@@ -86,5 +164,5 @@ else
     sas2ircu $controller locate $encaddr OFF
   done < $locsfile
   printf "" > $locsfile
-  rm /tmp/glabel-lookup-$pool.sed
+  rm /tmp/$SCRIPT_NAME-lookup-$pool.sed
 fi
