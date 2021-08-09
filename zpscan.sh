@@ -93,13 +93,6 @@ if [ ! "$1" ]; then
 fi
 
 basedir="/root/.sas2ircu"
-drivesfile=$basedir/drives-$pool
-locsfile=$basedir/locs-$pool
-if [ ! -d $basedir ]; then
-    mkdir $basedir
-fi
-touch $drivesfile
-touch $locsfile
 mailauth=false
 mailrecipient="root"
 
@@ -129,6 +122,15 @@ do
     fi
 
     echo "Working on pool - $pool"
+
+    drivesfile=$basedir/drives-$pool
+    locsfile=$basedir/locs-$pool
+    if [ ! -d $basedir ]; then
+        mkdir $basedir
+    fi
+    touch $drivesfile
+    touch $locsfile
+
     # Added exclude beacuse of false positive in case of pending ZFS features upgrade
     condition=$(zpool status $pool | egrep -i '(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED|corrupt|cannot|unrecover)' | egrep -v '(features are unavailable)' )
     if [ "${condition}" ]; then
