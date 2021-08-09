@@ -10,8 +10,20 @@
 # -Assumes drive serial numbers are unique in a system
 
 SCRIPT_NAME=`basename "$0"`
-SYSTEM=$(uname)
 
+pidfile=/var/run/$SCRIPT_NAME.pid
+if [ -e $pidfile ]; then
+    pid=`cat $pidfile`
+    if kill -0 &>1 > /dev/null $pid; then
+        echo "Already running"
+        exit 1
+    else
+        rm $pidfile
+    fi
+fi
+echo $$ > $pidfile
+
+SYSTEM=$(uname)
 if [ "$SYSTEM" = 'Linux' ]; then
   function CREATE_LOOKUP_FILE {
     blkid -s PARTUUID | awk -F  ":" '{split($1,drive,"/"); split($2,partuuid,"\""); print "s|"partuuid[2]"|"drive[3]"\t\t\t      |g"}' > /tmp/$SCRIPT_NAME-lookup-$pool.sed
@@ -76,13 +88,6 @@ if [ ! "$1" ]; then
   exit
 fi
 
-IS_RUNNING=`pgrep -f $SCRIPT_NAME | grep  -v "$$" | wc -c`
-
-#if [ $IS_RUNNING -ne 0 ]; then
-#  echo "Multiple instances of this script cannot be run at the same time due to sas2ircu not being able to run concurrently."
-#  exit
-#fi
-
 basedir="/root/.sas2ircu"
 drivesfile=$basedir/drives-$pool
 locsfile=$basedir/locs-$pool
@@ -109,8 +114,7 @@ if [ -z "$pool" ]; then
 fi
 
 # Added exclude beacuse of false positive in case of pending ZFS features upgrade
-# condition=$(zpool status $pool | egrep -i '(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED|corrupt|cannot|unrecover)' | egrep -v '(features are unavailable)' )
-condition=$(zpool status $pool | egrep -i '(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED|corrupt|cannot|unrecover)' )
+condition=$(zpool status $pool | egrep -i '(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED|corrupt|cannot|unrecover)' | egrep -v '(features are unavailable)' )
 if [ "${condition}" ]; then
   CREATE_LOOKUP_FILE
   emailSubject="`hostname` - ZFS pool - HEALTH fault"
