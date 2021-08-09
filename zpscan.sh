@@ -122,6 +122,12 @@ fi
 
 for pool in ${pools[@]}
 do
+    poolstatus=$(zpool status -x $pool 2>/dev/null )
+    if [ -z "$poolstatus" ]; then
+        echo "Pool $pool does not exists, skipping..."
+        continue
+    fi
+
     echo "Working on pool - $pool"
     # Added exclude beacuse of false positive in case of pending ZFS features upgrade
     condition=$(zpool status $pool | egrep -i '(DEGRADED|FAULTED|OFFLINE|UNAVAIL|REMOVED|FAIL|DESTROYED|corrupt|cannot|unrecover)' | egrep -v '(features are unavailable)' )
