@@ -5,7 +5,7 @@ This script is designed to notify you of disk failures on your TrueNAS CORE / Tr
 Download the script to someplace on your pool, and make it executable using `chmod +x zpscan.sh`.
 
 # Usage
-This script should be run as a regular cron job--the frequency is up to you, but I'd suggest between 15 minutes and an hour.  The command to run is `/path/to/zpscan.sh -p <poolname> -m [email_address] -a`.  The email address is optional; if set, the script will email you on disk failure. The email authentication is optional; if set, will look at /etc/ssmtp/ssmtp.conf for configuration and send mail accordingly, currently supports only TrueNAS SCALE.
+This script should be run as a regular cron job--the frequency is up to you, but I'd suggest between 15 minutes and an hour.  The command to run is `/path/to/zpscan.sh -p <poolname> -p <poolname> -m [email_address] -a`.  You can run with multiple pools defined. The email address is optional; if set, the script will email you on disk failure. The email authentication is optional; if set, will look at /etc/ssmtp/ssmtp.conf for configuration and send mail accordingly, currently supports only TrueNAS SCALE.
 
 # Operation
 The script runs regularly.  If the pool is healthy, it writes a text file to `/root/.sas2ircu/drives-<poolname>` listing your drives and their locations on your backplane.  If not, it writes a text file to `/root/.sas2ircu/locs-<poolname>` with the locations of any failed disks, turns on the warning LEDs for those locations, and (optionally) sends an email to the specified email address.
