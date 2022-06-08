@@ -1,3 +1,5 @@
+# Fork has been archived as I no longer use it and I do not have the environment to support it. Consider using either the upstream code or a related fork.
+
 # zpscan.sh
 This script is designed to notify you of disk failures on your FreeNAS server, and light the disk failure LED on your SuperMicro SAS2 backplane.  It is unknown whether it will work with other manufacturers' backplanes.  It's unlikely this script will work as is in any environment other than a FreeNAS server.
 
